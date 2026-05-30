@@ -58,7 +58,7 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
 
-    const socket = io("http://localhost:3000", { withCredentials: true });
+    const socket = io("https://ai-chatbox-904h.onrender.com", { withCredentials: true });
     socketRef.current = socket;
 
     socket.on("connect", () => console.log("Socket connected ✓"));

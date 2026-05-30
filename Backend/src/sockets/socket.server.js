@@ -11,7 +11,7 @@ const chatModel = require("../models/chat.model");
 function initSocketServer(httpServer) {
   const io = new Server(httpServer, {
     cors: {
-      origin: "http://localhost:5173",
+      origin:"https://ai-chatbox-ruby.vercel.app",
       credentials: true,
     },
   });
