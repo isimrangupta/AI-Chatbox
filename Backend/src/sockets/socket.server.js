@@ -10,8 +10,8 @@ const chatModel = require("../models/chat.model");
 
 function initSocketServer(httpServer) {
   const io = new Server(httpServer, {
-    cors: {
-      origin:"https://ai-chatbox-ruby.vercel.app",
+   cors: {
+      origin: ["http://localhost:5173", "https://ai-chatbox-ruby.vercel.app"],
       credentials: true,
     },
   });
@@ -95,7 +95,6 @@ function initSocketServer(httpServer) {
           },
         ];
 
-     
         const response = await aiService.generateResponse([...ltm, ...stm]);
 
         socket.emit("ai-response", {

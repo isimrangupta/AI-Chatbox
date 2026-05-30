@@ -8,9 +8,11 @@ const authRoutes = require("./routes/auth.routes");
 const chatRoutes = require("./routes/chat.routes");
 const messageRoutes = require("./routes/message.routes");
 
-
 app.use(cors({
-  origin: "https://ai-chatbox-ruby.vercel.app",
+  origin: [
+    "http://localhost:5173",
+    "https://ai-chatbox-ruby.vercel.app"
+  ],
   credentials: true,
 }));
 
