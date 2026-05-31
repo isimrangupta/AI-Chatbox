@@ -3,11 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
- import { chatService, messageService } from "../services/api";
+import { chatService, messageService } from "../services/api";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
 import "../styles/home.css";
 import "../styles/chat.css";
+
+const SOCKET_URL = "https://ai-chatbox-904h.onrender.com";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -24,41 +26,49 @@ export default function Home() {
   const [creatingChat, setCreatingChat] = useState(false);
 
   const socketRef = useRef(null);
-
   const activeChatRef = useRef(activeChat);
 
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
 
+  // ─── Redirect if not logged in ───────────────────────────────────────────
   useEffect(() => {
     if (!user) navigate("/login");
   }, [user, navigate]);
 
-  useEffect(() => {
-  if (!user) return;
-
-  async function loadChats() {
-    try {
-      const data = await chatService.getChats();
-
-      setChats(data.chats);
-
-      if (data.chats.length > 0) {
-        setActiveChat(data.chats[0]._id);
-      }
-    } catch (err) {
-      console.error("Load chats error:", err);
-    }
-  }
-
-  loadChats();
-}, [user]);
-
+  // ─── Load chats on mount ─────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
 
-    const socket = io("https://ai-chatbox-904h.onrender.com", { withCredentials: true });
+    async function loadChats() {
+      try {
+        const data = await chatService.getChats();
+        setChats(data.chats);
+        if (data.chats.length > 0) {
+          setActiveChat(data.chats[0]._id);
+        }
+      } catch (err) {
+        console.error("Load chats error:", err);
+      }
+    }
+
+    loadChats();
+  }, [user]);
+
+  // ─── Socket setup ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+
+    // FIX 1: token localStorage se lo
+    const token = localStorage.getItem("aurora-token");
+
+    const socket = io(SOCKET_URL, {
+      withCredentials: true,
+      auth: { token }, // FIX 2: token socket ko do
+    });
+
+    // FIX 3: socketRef mein assign karo
     socketRef.current = socket;
 
     socket.on("connect", () => console.log("Socket connected ✓"));
@@ -70,7 +80,12 @@ export default function Home() {
         ...prev,
         [chat]: [
           ...(prev[chat] || []),
-          { role: "model", content, _id: Date.now(), createdAt: new Date() },
+          {
+            role: "model",
+            content,
+            _id: Date.now(),
+            createdAt: new Date(),
+          },
         ],
       }));
     });
@@ -92,25 +107,56 @@ export default function Home() {
       }));
     });
 
-    return () => socket.disconnect();
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
   }, [user]);
 
+  // ─── Load messages when active chat changes ──────────────────────────────
+  useEffect(() => {
+    if (!activeChat) return;
+
+    async function loadMessages() {
+      try {
+        const data = await messageService.getMessages(activeChat);
+        setMessages((prev) => ({
+          ...prev,
+          [activeChat]: data.messages,
+        }));
+      } catch (err) {
+        console.error("Load messages error:", err);
+      }
+    }
+
+    loadMessages();
+  }, [activeChat]);
+
+  // ─── Send message ────────────────────────────────────────────────────────
   const sendMessage = useCallback(
     (content) => {
       if (!activeChat || !content.trim() || !socketRef.current) return;
+
       setMessages((prev) => ({
         ...prev,
         [activeChat]: [
           ...(prev[activeChat] || []),
-          { role: "user", content, _id: Date.now(), createdAt: new Date() },
+          {
+            role: "user",
+            content,
+            _id: Date.now(),
+            createdAt: new Date(),
+          },
         ],
       }));
+
       setAiTyping(true);
       socketRef.current.emit("ai-message", { chat: activeChat, content });
     },
     [activeChat]
   );
 
+  // ─── Create chat ─────────────────────────────────────────────────────────
   const createChat = async () => {
     const title = newChatTitle.trim() || "New Chat";
     setCreatingChat(true);
@@ -129,50 +175,24 @@ export default function Home() {
     }
   };
 
-
-const deleteChat = async (chatId) => {
-  try {
-    await chatService.deleteChat(chatId);
-
-    const updatedChats = chats.filter(
-      (chat) => chat._id !== chatId
-    );
-
-    setChats(updatedChats);
-
-    if (activeChat === chatId) {
-      setActiveChat(
-        updatedChats.length
-          ? updatedChats[0]._id
-          : null
-      );
-    }
-  } catch (err) {
-    console.error(err);
-  }
-};
-
-
-  useEffect(() => {
-  if (!activeChat) return;
-
-  async function loadMessages() {
+  // ─── Delete chat ─────────────────────────────────────────────────────────
+  const deleteChat = async (chatId) => {
     try {
-      const data = await messageService.getMessages(activeChat);
-
-      setMessages((prev) => ({
-        ...prev,
-        [activeChat]: data.messages,
-      }));
+      await chatService.deleteChat(chatId);
+      const updatedChats = chats.filter((c) => c._id !== chatId);
+      setChats(updatedChats);
+      if (activeChat === chatId) {
+        setActiveChat(updatedChats.length ? updatedChats[0]._id : null);
+      }
     } catch (err) {
-      console.error("Load messages error:", err);
+      console.error("Delete chat error:", err);
     }
-  }
+  };
 
-  loadMessages();
-}, [activeChat]);
-
+  // ─── Logout ──────────────────────────────────────────────────────────────
   const handleLogout = () => {
+    // FIX 4: logout pe token clear karo
+    localStorage.removeItem("aurora-token");
     logout();
     navigate("/login");
   };
@@ -181,18 +201,18 @@ const deleteChat = async (chatId) => {
 
   return (
     <div className="home-root">
-    <Sidebar
-  open={sidebarOpen}
-  chats={chats}
-  activeChat={activeChat}
-  onSelectChat={setActiveChat}
-  onDeleteChat={deleteChat}
-  onNewChat={() => setShowNewChatModal(true)}
-  onLogout={handleLogout}
-  user={user}
-  theme={theme}
-  onToggleTheme={toggleTheme}
-/>
+      <Sidebar
+        open={sidebarOpen}
+        chats={chats}
+        activeChat={activeChat}
+        onSelectChat={setActiveChat}
+        onDeleteChat={deleteChat}
+        onNewChat={() => setShowNewChatModal(true)}
+        onLogout={handleLogout}
+        user={user}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
 
       {sidebarOpen && (
         <div
@@ -209,9 +229,9 @@ const deleteChat = async (chatId) => {
             aria-label="Toggle sidebar"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="3" y1="6" x2="21" y2="6"/>
-              <line x1="3" y1="12" x2="21" y2="12"/>
-              <line x1="3" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
 
@@ -228,19 +248,19 @@ const deleteChat = async (chatId) => {
           >
             {theme === "dark" ? (
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="5"/>
-                <line x1="12" y1="1" x2="12" y2="3"/>
-                <line x1="12" y1="21" x2="12" y2="23"/>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-                <line x1="1" y1="12" x2="3" y2="12"/>
-                <line x1="21" y1="12" x2="23" y2="12"/>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
               </svg>
             ) : (
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
               </svg>
             )}
           </button>
@@ -257,14 +277,20 @@ const deleteChat = async (chatId) => {
       </div>
 
       {showNewChatModal && (
-        <div className="modal-backdrop" onClick={() => setShowNewChatModal(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowNewChatModal(false)}
+        >
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>New Conversation</h3>
-              <button className="icon-btn" onClick={() => setShowNewChatModal(false)}>
+              <button
+                className="icon-btn"
+                onClick={() => setShowNewChatModal(false)}
+              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18"/>
-                  <line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
@@ -291,7 +317,11 @@ const deleteChat = async (chatId) => {
                 onClick={createChat}
                 disabled={creatingChat}
               >
-                {creatingChat ? <span className="auth-spinner" /> : "Start Chat"}
+                {creatingChat ? (
+                  <span className="auth-spinner" />
+                ) : (
+                  "Start Chat"
+                )}
               </button>
             </div>
           </div>
